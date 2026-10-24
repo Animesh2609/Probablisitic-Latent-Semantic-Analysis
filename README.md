@@ -146,12 +146,12 @@ rather than by directly combining results from different notebooks.
 
 ## PLSA Model
 
-PLSA explains the words in a document through a mixture of latent
-topics. For document `d`, word `w`, and topic `z`:
+PLSA explains the words in a document through a mixture of latent topics.
+For document $d$, word $w$, and topic $z$:
 
-\[ P(w `\mid `{=tex}d) = `\sum`{=tex}\_{z=1}\^{K} P(w `\mid `{=tex}z)P(z
-`\mid `{=tex}d) \]
-
+$$
+P(w \mid d) = \sum_{z=1}^{K} P(w \mid z)P(z \mid d)
+$$
 The model learns two distributions:
 
 -   **Document-topic distribution**, `P(z | d)`: how strongly each topic
