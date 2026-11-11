@@ -1,11 +1,15 @@
 """Shared preprocessing and count-vectorization from the Group 12 notebooks."""
 
+from functools import lru_cache
+from .config import VECTORIZER_SETTINGS
+
 import numpy as np
 import spacy
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.model_selection import train_test_split
 
 
+@lru_cache(maxsize=1)
 def load_nlp():
     """Requires: python -m spacy download en_core_web_sm"""
     return spacy.load("en_core_web_sm", disable=["ner", "parser"])
@@ -33,21 +37,13 @@ def preprocess_texts(texts, nlp=None):
 
 def make_count_vectorizer():
     """Use the same settings as the original notebooks."""
-    return CountVectorizer(
-        lowercase=False,
-        tokenizer=str.split,
-        token_pattern=None,
-        max_features=3000,
-        min_df=3,
-        max_df=0.90,
-        dtype=np.float64,
-    )
+    return CountVectorizer(**VECTORIZER_SETTINGS, dtype=np.float64)
 
 
-def split_train_test(documents, labels, test_size=0.25, seed=42):
-    """75/25 stratified split used in baseline and six-category studies."""
+def split_train_test(documents, labels, *aligned_arrays, test_size=0.25, seed=42):
+    """Stratified split; preserve alignment of optional original category labels."""
     return train_test_split(
-        documents, labels, test_size=test_size, random_state=seed, stratify=labels
+        documents, labels, *aligned_arrays, test_size=test_size, random_state=seed, stratify=labels
     )
 
 

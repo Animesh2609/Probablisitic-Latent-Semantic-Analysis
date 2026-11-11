@@ -140,7 +140,7 @@ to preserve category proportions. The vocabulary and models are fitted
 using training data, validation data is used to choose settings and the
 held-out test set is reserved for final evaluation.
 
-The exact split and vocabulary settings can differ between notebooks.
+Splits differ by study; vectorizer settings and preprocessing implementations are shared.
 Comparisons should therefore be made within the same experiment setup
 rather than by directly combining results from different notebooks.
 
@@ -377,58 +377,115 @@ should follow from the measured results for each experimental setup.
 
 ## Repository Structure
 
+All six notebooks import the **same PLSA implementation** from `src/plsa_model.py`.
+They create separate fitted instances for different K values, seeds and bootstrap
+samples. Dataset, preprocessing and metric implementations are shared too;
+experimental choices remain explicit in each notebook and `src/config.py`.
 
+```text
+Result.py                 # Run experiments or build the combined results report
+src/
+  config.py               # Corpus profiles, queries and vectorizer settings
+  dataset.py              # One 20 Newsgroups loader and supergroup mapping
+  preprocessing.py        # Cached spaCy pipeline, splits and training vocabulary
+  plsa_model.py           # Single PLSA EM, fold-in and restart implementation
+  retrieval.py            # TF-IDF/LSI fitting and query-likelihood scoring
+  metrics.py              # Precision, recall, F1, AP, NDCG and reciprocal rank
+  experiments.py          # Synthetic mixtures and ensemble rank aggregation
+  profiling.py            # Runtime and sampled process memory
+  results.py              # CSV export, provenance and report generation
+*.ipynb                   # Study-specific orchestration, plots and explanation
+requirements.txt          # Runtime dependencies
+requirements-dev.txt      # Test dependencies
+tests/                   # Numerical and notebook integration checks
+```
 
+| Notebook | Corpus / relevance | Train / validation / test |
+| --- | --- | --- |
+| `PLSA_Baseline.ipynb` | All 20 categories | 75 / 0 / 25 |
+| `PLSA_Retrieval_Scoring_Investigation.ipynb` | Six original categories | 75 / 0 / 25 |
+| `Six_Category_Experiment.ipynb` | All 20 categories mapped to six supergroups | 80 / 0 / 20 |
+| `Bagging_Experiment.ipynb` | Same six supergroups | 80 / 0 / 20 |
+| `Retrieval_Validation_Query_Study.ipynb` | Six original categories | 60 / 20 / 20 |
+| `All20_K_Study.ipynb` | All 20 categories | 60 / 20 / 20 |
 
-
-
-
-
-
-
-
-
-
-
+The legacy `Six_Category_Experiment` filename refers to **six supergroups**,
+not the smaller six-category corpus. Compare methods within each study; scores
+from different evaluation settings are not a common leaderboard.
 
 ## Installation and Setup
 
-The notebooks use Python and common scientific computing libraries.
+Use Python 3.10 or newer and run commands from the repository root:
 
-### Dependencies
-
-``` bash
-python -m pip install numpy scipy scikit-learn pandas matplotlib spacy notebook
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python -m pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 ```
 
-If working in Google Colab, run the following in a code cell if the
-dependencies are not already installed:
+The first dataset load may download 20 Newsgroups through scikit-learn; its
+cache lives in `.cache/sklearn/`. All notebooks remove headers, footers and
+quoted text through the same loader. The raw `20news-bydate/` folder is retained
+as source data, but is not a separate loading/preprocessing path.
 
-``` python
-%pip install -q numpy scipy scikit-learn pandas matplotlib spacy
-!python -m spacy download en_core_web_sm
-```
-
-The dataset is loaded through scikit-learn's `fetch_20newsgroups`
-utility. An internet connection may be needed the first time the dataset
-is downloaded.
+To open notebooks interactively, install JupyterLab (`pip install jupyterlab`)
+and launch it from this directory. In Colab, clone the entire repository,
+change into its directory, and install these same requirements; uploading a
+notebook alone is insufficient because it imports `src`.
 
 ## Running the Notebooks
 
-1.  Clone or download the GitHub repository.
-2.  Open the project notebook in Jupyter Notebook, JupyterLab, or Google
-    Colab.
-3.  Install the dependencies and the `en_core_web_sm` spaCy model.
-4.  Run the notebook cells in order so that preprocessing, model
-    definitions, and helper functions are created before they are used.
-5.  Review the outputs for topic-word distributions, convergence,
-    retrieval metrics, query coverage, and resource profiling.
-6.  Save the latest verified results and figures for the project report.
+Run any notebook's cells in order through the final export cell. Its result
+folder contains CSV tables and `manifest.json` with split sizes, settings,
+package versions and source hashes. Old execution outputs were cleared during
+the shared-code refactor; explicitly marked historical interpretations need
+verification against a new run.
 
-Some experiments fit PLSA multiple times and may require substantial
-runtime and memory. Actual performance depends on the execution
-environment.
+Use the requested **`Result.py`** file for a single entry point:
+
+```bash
+python Result.py --run all
+# Or execute just one experiment:
+python Result.py --run PLSA_Baseline
+# Rebuild the report from completed runs without retraining:
+python Result.py
+```
+
+`results/Result.md` explains the entire workflow and displays each study's
+retrieval summary, with links to all its exported tables (per-query retrieval,
+K/beta studies, mixtures, convergence, topic words, coverage, and resource
+measurements where that notebook produces them). `results/summary.csv` collects
+the summaries with an experiment column. Executed notebooks are saved in
+`results/executed_notebooks/` when launched through `Result.py`.
+
+Missing studies are marked **not run yet**; scores are never hard-coded. Source
+hashes flag when the current code differs from an exported run. Every successful
+run gets a unique directory; `latest.json` points to the most recent completed
+export. Full execution fits many models and can require substantial time and
+memory. `--timeout` controls the per-cell time limit (default: 7200 seconds).
+
+AP is a per-query metric; its average across queries is MAP. Some legacy
+supergroup detail tables label per-query AP as `MAP@10`; `Result.py` reports the
+macro average correctly. The original `MRR` column is truncated at 10 and is
+labeled `MRR@10` in the combined report. Ties retain the original NumPy argsort
+ordering. Candidate eligibility and smoothing floors retain each study's
+original choices; filtering an empty processed text differs from filtering a
+zero vector after vocabulary selection.
+
+### Verification
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m tests.smoke_notebooks
+```
+
+The integration check executes every code cell using the real loader and spaCy
+pipeline, sampled to 15 documents per original category and at most three EM
+iterations per fit/fold-in. It writes separately to `results-smoke/` and marks
+outputs **smoke**. These numbers verify wiring, not retrieval performance; full
+research scores require running the original budgets with `Result.py --run all`.
 
 ## How to Interpret the Results
 
@@ -454,8 +511,9 @@ environment.
 
 ## Limitations
 
-1.  The six-category experiment uses a smaller subset of the full
-    dataset, so its findings may not generalize to all 20 categories.
+1.  The scoring and validation studies use a six-category subset, so
+    their findings may not generalize to all 20 categories. The six-supergroup
+    and bagging studies retain all 20 original categories.
 2.  PLSA learns topics without category labels, and the learned topics
     may not correspond exactly to the dataset categories.
 3.  The query set is limited, and category membership is only an

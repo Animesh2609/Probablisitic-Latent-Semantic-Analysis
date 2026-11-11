@@ -1,5 +1,7 @@
 """Shared retrieval scoring from Group 12's PLSA notebooks."""
 
+from .config import VECTORIZER_SETTINGS
+
 import numpy as np
 from scipy.sparse import csr_matrix
 from sklearn.decomposition import TruncatedSVD
@@ -10,10 +12,7 @@ from sklearn.preprocessing import Normalizer
 
 
 def make_tfidf_vectorizer():
-    return TfidfVectorizer(
-        lowercase=False, tokenizer=str.split, token_pattern=None,
-        max_features=3000, min_df=3, max_df=0.90,
-    )
+    return TfidfVectorizer(**VECTORIZER_SETTINGS)
 
 
 def fit_baselines(train_processed, *other_processed, seed=42):

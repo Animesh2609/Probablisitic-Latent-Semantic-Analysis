@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Shared workflow: local caches, exported runs and environments
+.cache/
+results/
+results-smoke/
+.venv/
