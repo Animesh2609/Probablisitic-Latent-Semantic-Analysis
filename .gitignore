@@ -1,3 +1,4 @@
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -103,8 +104,7 @@ ipython_config.py
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
+#   This is especially recommended for binary packages, and is more commonly ignored for libraries.
 #   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
 # poetry.lock
 # poetry.toml
@@ -186,7 +186,7 @@ cython_debug/
 # PyCharm
 #   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#   and can be added to the global gitignore or merged into this file.  For a more nuclear
+#   and can be added to the global gitignore or merged into this file. For a more nuclear
 #   option (not recommended) you can uncomment the following to ignore the entire idea folder.
 # .idea/
 
@@ -202,6 +202,7 @@ cython_debug/
 #   and can be added to the global gitignore or merged into this file. However, if you prefer, you
 #   could uncomment the following to ignore the entire vscode folder
 # .vscode/
+
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
@@ -218,3 +219,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# ==================================================
+# IR PROJECT-SPECIFIC EXCLUSIONS
+# ==================================================
+
+# Dataset and locally persisted preprocessed data
+data/
+20news-bydate/
+
+# NOTE:
+# results/ is intentionally NOT ignored.
+# Experiment results must be committed to GitHub.

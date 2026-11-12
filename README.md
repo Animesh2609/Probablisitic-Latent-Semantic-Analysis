@@ -1,493 +1,368 @@
-# Modeling Beyond Keywords: Probabilistic Latent Semantic Analysis (PLSA)
-
-**Group 12 | Information Retrieval | BITS Pilani**
-
-This repository contains our course project on implementing
-**Probabilistic Latent Semantic Analysis (PLSA)** and studying its use
-in document retrieval. We compare PLSA-based retrieval with **TF-IDF /
-Vector Space Model (VSM)** and **Latent Semantic Indexing (LSI)** using
-the 20 Newsgroups dataset.
-
-The project looks at two related questions: how well can PLSA discover
-latent topics in a collection of documents, and how useful are those
-topics when retrieving documents for different kinds of queries?
-
-> **Project note:** Results vary across the full 20-category corpus and
-> the smaller six-category experiment. The README describes the
-> experiments and evaluation approach; use the latest notebook outputs
-> for any reported numerical results.
-
-## Table of Contents
-
--   [Project Motivation](#project-motivation)
--   [Project Goals](#project-goals)
--   [Dataset](#dataset)
--   [Text Preprocessing](#text-preprocessing)
--   [PLSA Model](#plsa-model)
--   [Training with EM](#training-with-em)
--   [Document Retrieval Methods](#document-retrieval-methods)
--   [Query Design and Evaluation](#query-design-and-evaluation)
--   [Topic-Mixture Experiment](#topic-mixture-experiment)
--   [Model-Order Study](#model-order-study)
--   [Runtime and Memory Profiling](#runtime-and-memory-profiling)
--   [Metrics](#metrics)
--   [Experimental Design and
-    Reproducibility](#experimental-design-and-reproducibility)
--   [Repository Structure](#repository-structure)
--   [Installation and Setup](#installation-and-setup)
--   [Running the Notebooks](#running-the-notebooks)
--   [How to Interpret the Results](#how-to-interpret-the-results)
--   [Limitations](#limitations)
--   [Team](#team)
--   [Reference](#reference)
-
-## Project Motivation
-
-Traditional keyword-based retrieval methods work well when the words in
-a query closely match the words used in relevant documents. However, a
-relevant document may discuss the same idea using different terminology.
-This project explores whether latent topic representations can provide a
-useful alternative or complement to direct word matching.
-
-PLSA is a probabilistic topic model. It represents each document as a
-mixture of topics and each topic as a probability distribution over
-words. We use this representation to investigate topic structure and to
-retrieve documents for queries.
-
-The project does not assume that PLSA must outperform conventional
-methods. Instead, we compare the methods experimentally and examine
-where their strengths and weaknesses appear.
-
-## Project Goals
-
-The main goals are to:
-
-1.  Implement PLSA using the Expectation--Maximization (EM) algorithm.
-2.  Learn document-topic and topic-word probability distributions from
-    document word counts.
-3.  Inspect the most representative words associated with learned
-    topics.
-4.  Compare PLSA retrieval with TF-IDF and LSI.
-5.  Evaluate different query styles: direct keywords, paraphrases, and
-    related domain terms.
-6.  Study how changing the number of latent topics, `K`, affects
-    training and topic separation.
-7.  Create synthetic documents from two source categories and examine
-    the topic mixtures inferred by PLSA.
-8.  Measure the runtime and memory used during model training and
-    inference.
-
-## Dataset
-
-The experiments use the **20 Newsgroups** text dataset, available
-through sklearn.datasets.fetch_20newsgroups(subset="all")
-
-Two corpus settings are explored:
-
-### Full 20-category corpus
-
-The baseline experiment uses the original newsgroup categories. This
-setting includes a broad range of subjects, some of which are closely
-related. It provides a more challenging test of whether PLSA can learn
-useful topic representations across a diverse collection.
-
-### Six-category subset
-
-A separate experiment retains six categories with more distinct subject
-matter, including:
-
--   `comp.graphics`
--   `misc.forsale`
--   `rec.sport.baseball`
--   `sci.med`
--   `sci.space`
--   `talk.politics.guns`
-
-The purpose of this smaller experiment is to investigate topic discovery
-and query-based retrieval in a corpus where the selected categories are
-easier to distinguish. This is a diagnostic setup, not evidence that six
-is the ideal number of topics.
-
-**Important distinction:** the number of dataset categories and the
-number of latent PLSA topics (`K`) are different. PLSA may split a
-category across topics or learn a topic that contains words from
-multiple categories.
-
-## Text Preprocessing
-
-Text is cleaned and converted into numerical word-count representations
-before fitting PLSA.
-
-The preprocessing pipeline includes:
-
-1.  **Text cleanup:** dataset headers, footers, and quoted text are
-    removed where configured.
-2.  **Tokenization and normalization:** spaCy processes each document.
-3.  **Filtering:** spaces, punctuation, numbers, non-alphabetic tokens,
-    and stop words are removed.
-4.  **Lemmatization:** words are converted to their base forms; for
-    example, related inflected forms can share one representation.
-5.  **Vocabulary construction:** `CountVectorizer` builds the vocabulary
-    from training documents only, with settings such as
-    `max_features=3000`, `min_df=3`, and `max_df=0.90` in the
-    six-category validation experiment.
-6.  **Document-term matrix:** each document is represented by word
-    counts over the selected vocabulary.
-
-In the validation-based six-category experiment, the data is split into
-**60% training, 20% validation, and 20% test** sets using stratification
-to preserve category proportions. The vocabulary and models are fitted
-using training data, validation data is used to choose settings and the
-held-out test set is reserved for final evaluation.
-
-The exact split and vocabulary settings can differ between notebooks.
-Comparisons should therefore be made within the same experiment setup
-rather than by directly combining results from different notebooks.
-
-## PLSA Model
-
-PLSA explains the words in a document through a mixture of latent topics.
-For document $d$, word $w$, and topic $z$:
-
-$$
-P(w \mid d) = \sum_{z=1}^{K} P(w \mid z)P(z \mid d)
-$$
-The model learns two distributions:
-
--   **Document-topic distribution**, `P(z | d)`: how strongly each topic
-    is associated with a document.
--   **Topic-word distribution**, `P(w | z)`: how strongly each word is
-    associated with a topic.
-
-Each distribution is probabilistic, so its values are non-negative and
-normalized to sum to one along the appropriate dimension.
-
-The model is unsupervised. It learns these distributions from word
-counts without using the category labels as training targets.
-
-## Training with EM
-
-PLSA is trained using the **Expectation--Maximization (EM)** algorithm.
-
-### E-step
-
-For each observed document-word pair, the model estimates the
-responsibility of each topic: the probability that a topic accounts for
-that word in that document.
-
-### M-step
-
-The model uses the expected topic assignments and observed word counts
-to update the document-topic and topic-word distributions.
-
-These steps repeat until the improvement in training log-likelihood
-becomes smaller than the chosen tolerance or the maximum number of
-iterations is reached.
-
-Because the result can depend on initialization, the experiments may fit
-several initializations and compare their training log-likelihoods. The
-highest training likelihood indicates the best fit among those runs on
-the training data; it does **not** guarantee the best held-out retrieval
-performance.
-
-## Document Retrieval Methods
-
-The project compares three main approaches.
-
-### 1. TF-IDF / Vector Space Model
-
-TF-IDF assigns higher weight to words that are informative for a
-document and lower weight to words that occur frequently across the
-collection. Documents and queries are represented as weighted vectors,
-and similarity scores are used to rank candidate documents.
-
-This method is a useful lexical baseline, especially when query words
-overlap with relevant document words.
-
-### 2. Latent Semantic Indexing (LSI)
-
-LSI applies truncated Singular Value Decomposition (SVD) to a TF-IDF
-matrix to obtain a lower-dimensional representation. Documents and
-queries can then be compared in this reduced space.
-
-LSI uses a geometric low-rank representation rather than PLSA's
-normalized probability distributions.
-
-### 3. PLSA-based retrieval
-
-PLSA represents documents through their inferred topic mixtures. The
-experiments explore two scoring approaches:
-
--   **Cosine similarity:** compares topic-space representations using
-    cosine similarity.
--   **Query likelihood:** scores documents according to how likely the
-    query is under the document's topic representation, with background
-    smoothing where configured.
-
-Where a PLSA + TF-IDF hybrid is included, it is reported as a separate
-method. Hybrid results should not be described as results from pure
-PLSA.
-
-## Query Design and Evaluation
-
-The six-category validation study uses a fixed set of queries, with
-three query styles for each category:
-
--   **Direct keywords:** terms closely associated with the target
-    category.
--   **Paraphrases:** a different wording of the same general information
-    need.
--   **Related terms:** domain vocabulary that may be associated with the
-    target category without repeating the exact query wording.
-
-This setup helps examine whether retrieval performance changes with
-query wording.
-
-The query vocabulary analysis checks which preprocessed query terms
-occur in the vocabulary built from training documents. It records
-vocabulary coverage and out-of-vocabulary terms. Per-query evaluation
-then connects that coverage with retrieval metrics, helping identify
-cases where missing vocabulary may affect retrieval.
-
-For validation-based model selection, the validation set is used to
-select settings such as PLSA topic count and query-likelihood background
-smoothing. After the settings are fixed, the final comparison is
-performed on held-out test documents.
-
-The same queries, candidate documents, and relevance labels should be
-used for all methods within a given experiment.
-
-## Topic-Mixture Experiment
-
-To study how PLSA represents documents that combine subjects, the
-experiment creates artificial documents by sampling word tokens from
-source documents in two categories:
-
--   `rec.sport.baseball`
--   `talk.politics.guns`
-
-The source-word ratio is varied, and PLSA's folding-in procedure
-estimates the topic mixture for each artificial document. The inferred
-probabilities are compared with the known source-word proportions.
-
-The experiment identifies baseball-associated and politics-associated
-topics by examining the average topic distributions of training
-documents from those source categories.
-
-**Interpretation caution:** the source-word ratio is not expected to
-match the inferred topic probability exactly. A learned topic may cover
-only part of a category, or may contain words associated with both
-categories. The experiment checks whether a mixture signal appears; it
-does not establish perfect recovery of the original proportions.
-
-## Model-Order Study
-
-The model-order study compares different values of `K`, the number of
-latent topics. It records training log-likelihood and the number of
-iterations needed for convergence, and allows inspection of how the
-learned topics change as `K` varies.
-
-A larger `K` does not necessarily produce more meaningful topics or
-better retrieval. Training likelihood is useful for studying model fit
-and convergence, but retrieval quality must be assessed separately on
-held-out documents.
-
-The six dataset categories do not require `K=6`; category count and
-latent topic count are separate choices.
-
-## Runtime and Memory Profiling
-
-The project includes resource profiling to measure the computational
-cost of PLSA.
-
-### Training profiling
-
-The training profile records measurements for a PLSA fit, including
-runtime and memory use, along with the configured topic count, number of
-iterations completed, and final training log-likelihood.
-
-### Inference profiling
-
-The inference profile measures the resources required to infer topic
-mixtures for held-out test documents using both the cosine-based and
-query-likelihood PLSA models. It records runtime and memory measurements
-for the inference operation.
-
-These measurements help compare the cost of training and applying the
-model. They depend on the hardware, Python environment, dataset size,
-and model configuration, so reported values should include the settings
-under which they were measured.
-
-## Metrics
-
-The project uses ranking metrics to compare retrieval methods.
-
-  Metric                              Meaning
-  -----------------------------------------------------------------------
-  **Precision@10**                    Of the top 10 retrieved documents,
-                                      how many are relevant?
-
-  **Recall@10**                       Of all relevant documents in the
-                                      evaluated collection, how many
-                                      appear in the top 10?
-
-  **AP@10**                           Rewards ranking relevant documents
-                                      near the top for one query.
-
-  **MAP@10**                          Average AP@10 across the query set.
-
-  **MRR**                             Measures how high the first
-                                      relevant result appears.
-
-  **NDCG@10**                         Measures ranking quality while
-                                      giving more importance to
-                                      higher-ranked results.
-
-
-In these experiments, relevance is generally determined from category
-labels. A retrieved document is treated as relevant when its category
-matches the target category for the query. These labels provide a
-convenient and consistent proxy, but they are not the same as human
-judgments of whether a document truly answers a query.
-
-Metric values should only be compared directly when the corpus, split,
-query set, candidate pool, relevance definition, and metric
-implementation are consistent.
-
-## Experimental Design and Reproducibility
-
-For a fair comparison:
-
--   Fit the vocabulary and retrieval models using training documents
-    only.
--   Use validation data for hyperparameter selection when a validation
-    split is available.
--   Keep the held-out test set separate until the final evaluation.
--   Use the same queries, relevance labels, and candidate documents for
-    methods being compared.
--   Set and report random seeds for experiments that involve random
-    initialization or sampling.
--   Record the topic count, iteration settings, preprocessing
-    configuration, and scoring method alongside results.
--   Keep results from the full 20-category and six-category experiments
-    clearly separated.
-
-No single method is assumed to be best in advance. The conclusions
-should follow from the measured results for each experimental setup.
-
-## Repository Structure
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Installation and Setup
-
-The notebooks use Python and common scientific computing libraries.
-
-### Dependencies
-
-``` bash
-python -m pip install numpy scipy scikit-learn pandas matplotlib spacy notebook
-python -m spacy download en_core_web_sm
+# Modeling Beyond Keywords:Probabilistic Latent Semantic Analysis
+
+This is the repository contains our IR
+project  implementing Probabilistic Latent Semantic Analysis (PLSA) and studying its use in document retrieval. It compares PLSA with TF-IDF/VSM and Latent Semantic Indexing (LSI)
+on 20 Newsgroups. Seven experiments examine corpus/relevance choices, topic
+count, retrieval scoring, validation, query wording, ensembles and synthetic
+topic-mixture responses.
+
+**Repository:** https://github.com/Animesh2609/Probablisitic-Latent-Semantic-Analysis
+
+## 1. Recommended evaluator approach
+
+1. Read this guide and open [`Result.ipynb`](Result.ipynb) to understand the
+   supplied results and the common workflow/metric definitions.
+2. Read the seven source notebooks in `experiments/` in their numbered order.
+   Each contains the research question, settings, calls to shared modules,
+   evaluation and artifact-saving code.
+3. Inspect `src/` for the PLSA EM and fold-in implementation, TF-IDF/LSI models,
+   scoring, metrics, ensembles and mixture generation.
+4. Choose **report verification** below for a quick inspection of the saved
+   evidence, or **full reproduction** to prepare data and retrain the models.
+5. Read the report's closing discussion for what each experiment changes,
+   why it is tried, and whether the saved results actually improve PLSA.
+
+`Result.ipynb` **loads result artifacts**. It neither imports/executes the
+seven source notebooks nor duplicates their training code. Its comments and
+Markdown explain the outputs. `run_project.py` is the optional execution
+wrapper that runs the original notebooks in isolated kernels.
+
+## 2. Clone and create an environment
+
+Use **Python 3.11 or Python 3.12**, Git and an internet connection for package
+installation. The documented scientific packages and report execution were
+validated in a clean Python 3.12 environment. Windows, macOS and Linux commands
+are provided; the verification environment was Linux, not all three systems.
+The models run on CPU; a GPU is not required.
+
+### macOS / Linux
+
+```bash
+git clone https://github.com/Animesh2609/Tendering.git
+cd Tendering/IR_Project_final
+python3 --version  # Must be Python 3.11 or 3.12
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 ```
 
-If working in Google Colab, run the following in a code cell if the
-dependencies are not already installed:
+### Windows PowerShell
 
-``` python
-%pip install -q numpy scipy scikit-learn pandas matplotlib spacy
-!python -m spacy download en_core_web_sm
+```powershell
+git clone https://github.com/Animesh2609/Tendering.git
+cd Tendering\IR_Project_final
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 ```
 
-The dataset is loaded through scikit-learn's `fetch_20newsgroups`
-utility. An internet connection may be needed the first time the dataset
-is downloaded.
+Python 3.11 users can substitute `py -3.11`. If PowerShell blocks activation,
+run `.\.venv\Scripts\python.exe` instead of `python` in the commands below.
+In Command Prompt, activation is `.venv\Scripts\activate.bat`.
 
-## Running the Notebooks
+**Working directory:** all commands below are run from `Tendering/IR_Project_final`,
+where `run_project.py`, `Result.ipynb`, `src/`, `experiments/` and `results/` live.
 
-1.  Clone or download the GitHub repository.
-2.  Open the project notebook in Jupyter Notebook, JupyterLab, or Google
-    Colab.
-3.  Install the dependencies and the `en_core_web_sm` spaCy model.
-4.  Run the notebook cells in order so that preprocessing, model
-    definitions, and helper functions are created before they are used.
-5.  Review the outputs for topic-word distributions, convergence,
-    retrieval metrics, query coverage, and resource profiling.
-6.  Save the latest verified results and figures for the project report.
+## 3. Quick path: view and verify the submitted results
 
-Some experiments fit PLSA multiple times and may require substantial
-runtime and memory. Actual performance depends on the execution
-environment.
+You can view the committed report in GitHub without installation. For local
+viewing or refreshing its outputs, install only the report dependencies:
 
-## How to Interpret the Results
+```bash
+python -m pip install -r requirements-report.txt
+python run_project.py report
+python -m jupyterlab
+```
 
--   **PLSA topics are not category labels.** A topic can contain words
-    from several categories, and a category can be represented by
-    several topics.
--   **Training fit and retrieval are different.** A higher training
-    log-likelihood does not guarantee better ranking on unseen
-    documents.
--   **Query wording matters.** Direct keywords, paraphrases, and related
-    terms can produce different retrieval outcomes.
--   **Vocabulary coverage matters.** Query terms absent from the
-    training vocabulary cannot contribute to retrieval in the same way
-    as known terms.
--   **Methods have different strengths.** TF-IDF can be effective for
-    exact lexical overlap; LSI and PLSA use different kinds of
-    lower-dimensional representations.
--   **Resource measurements are contextual.** Runtime and memory numbers
-    should be interpreted alongside the model configuration and machine
-    used.
--   **Use measured evidence.** Avoid general claims that one method is
-    always superior; report what happens in each tested setting.
+Open **`Result.ipynb`** in JupyterLab. The report runner refreshes that file in
+place. It reads the committed artifacts, displays the seven result sections,
+shows all 14 saved plots, checks summary arithmetic and validation choices,
+and finishes with the PLSA improvement discussion/comparison tables. The
+supplied artifact set passes **14 consistency checks**. These are checks of
+saved results, not a fresh training run.
 
-## Limitations
+This path does not need spaCy, the raw dataset or the preprocessed corpus.
+It does not change any CSV/JSON/PNG/NPZ files under `results/`.
 
-1.  The six-category experiment uses a smaller subset of the full
-    dataset, so its findings may not generalize to all 20 categories.
-2.  PLSA learns topics without category labels, and the learned topics
-    may not correspond exactly to the dataset categories.
-3.  The query set is limited, and category membership is only an
-    approximate measure of query relevance.
-4.  In the synthetic mixture experiment, source-word proportions are not
-    guaranteed to equal the topic probabilities inferred by PLSA.
-5.  Selecting a model using training log-likelihood alone does not
-    guarantee the best retrieval performance.
-6.  Runtime and memory measurements depend on the execution environment
-    and model settings.
-7.  More queries and human-judged relevance labels would provide a
-    stronger evaluation of retrieval quality.
+## 4. Full reproduction: install the model dependencies
 
-## Team
+In the same activated environment:
 
-**Group 12 --- Information Retrieval**
+```bash
+python -m pip install -r requirements.txt
+python run_project.py check
+```
 
-1. Nookala Gayathri Sreeja (2025H1030232P)
-2. Shubhangi Tyagi (2025H1030059P)
-3. Khush Siddharth Bothra (2026H1120139P)
-4. Animesh Singh (2026H1120144P)
+`requirements.txt` includes the reporting/Jupyter dependencies plus NumPy,
+SciPy, scikit-learn, matplotlib, spaCy, psutil and the pinned English model
+`en_core_web_sm==3.8.0`. The English model is installed from its official GitHub
+release as part of the requirements; there is no additional model download
+step. `check` tests the actual imports and loads that model. A message saying
+the corpus is not generated is expected on a fresh clone.
 
+The scientific versions are pinned to the environment used to verify this
+submission. [`requirements-lock.txt`](requirements-lock.txt) records its full
+resolved package set for an additional Linux/Python 3.12 reference. It is not
+a recovered lockfile from the teammate's original training machine. Start with
+`requirements.txt` on other supported platforms.
 
-## Reference
+## 5. Dataset preparation
 
-Thomas Hofmann. "Probabilistic Latent Semantic Analysis." *Proceedings
-of the Fifteenth Conference on Uncertainty in Artificial Intelligence
-(UAI)*, 1999.
+The final code uses the complete **20 Newsgroups** corpus through
+`sklearn.datasets.fetch_20newsgroups(subset='all')` (18,846 documents, 20
+categories), removing headers, footers and quotes. spaCy then filters spaces,
+punctuation, numeric/non-alphabetic tokens and stop words, lowercases lemmas,
+and discards lemmas shorter than two characters.
 
+Prepare it with:
 
-**Course project:** Information Retrieval\
-**Project title:** Modeling Beyond Keywords: Probabilistic Latent
-Semantic Analysis (PLSA)\
-**Group:** 12\
-**Repository URL:** https://github.com/Animesh2609/Probablisitic-Latent-Semantic-Analysis.git
+```bash
+python run_project.py preprocess
+```
+
+This executes [`src/preprocessing.ipynb`](src/preprocessing.ipynb) and creates:
+
+```text
+data/raw/                      # scikit-learn download/cache
+data/20news_preprocessed.npz    # documents, labels, category_names
+```
+
+The data directory is generated locally and ignored by Git. The download is
+performed by scikit-learn from its configured upstream dataset host. The
+preprocessed archive uses string and numeric arrays and is read with
+`allow_pickle=False` by the experiments. The archive from the teammate's ZIP
+is not required: the repository contains the full code to generate it.
+
+Preprocessing is a common, document-local cleanup step. **Vocabulary selection,
+TF-IDF fitting and LSI fitting happen separately inside each experiment using
+its training partition only.** Test/validation documents do not fit those
+representations. Labels define splits, relevance and diagnostics, not PLSA's
+unsupervised EM fitting objective.
+
+## 6. Run the research experiments
+
+### One command for the complete workflow
+
+```bash
+python run_project.py all
+```
+
+On a fresh clone this prepares the corpus, executes experiments 01–07 in order,
+then refreshes `Result.ipynb`. If `data/20news_preprocessed.npz` already exists,
+it reuses that file. Run `preprocess` explicitly before `all` if you want to
+rebuild it with the installed spaCy version.
+
+### Run stages independently
+
+```bash
+python run_project.py preprocess
+python run_project.py experiments
+python run_project.py report
+```
+
+### Rerun selected experiments
+
+```bash
+python run_project.py experiments --only 01 04
+python run_project.py report
+```
+
+`--only` accepts any of `01 02 03 04 05 06 07` and applies to `experiments` mode
+only. Each experiment is self-contained after preprocessing: it does not rely
+on variables or fitted models from a preceding notebook. Numbered order is
+recommended to follow the research narrative. The runner does not change
+hyperparameters, subsample data or replace any original model functions.
+
+### Run interactively instead
+
+```bash
+python -m jupyterlab
+```
+
+Open `src/preprocessing.ipynb` and run its cells in order once. Then open each
+notebook in `experiments/` and choose **Restart Kernel and Run All**. Finish by
+running `Result.ipynb`. Launch Jupyter from the project directory and select
+the Python environment where you installed the requirements. The CLI runner
+always uses its own Python interpreter, avoiding an unrelated global kernel.
+
+## 7. Which file answers which question?
+
+| File | Data / split | What it tests | Saved output folder |
+|---|---|---|---|
+| [`01_plsa_baseline.ipynb`](experiments/01_plsa_baseline.ipynb) | All 20 categories; 75/25 | K=5 PLSA, five restarts; cosine versus TF-IDF/LSI; topics, convergence and mixtures | `results/plsa_baseline/` |
+| [`02_six_category_experiment.ipynb`](experiments/02_six_category_experiment.ipynb) | All 20 categories mapped to six broad groups; 80/20 | K=6, six group queries; topic/group alignment, centroids and mixtures | `results/six_category_experiment/` |
+| [`03_all20_k_study.ipynb`](experiments/03_all20_k_study.ipynb) | All 20 categories; 60/20/20 | K=2,5,8,10,20; validation-selected K for each PLSA scorer; test sensitivity curves | `results/all20_k_study/` |
+| [`04_retrieval_scoring_investigation.ipynb`](experiments/04_retrieval_scoring_investigation.ipynb) | Six original categories; 75/25 | Same K=6 PLSA fit: topic cosine versus query likelihood, ranking agreement | `results/retrieval_scoring_investigation/` |
+| [`05_retrieval_validation_query_study.ipynb`](experiments/05_retrieval_validation_query_study.ipynb) | Six original categories; 60/20/20 | 18 queries; K/background tuning, query families, vocabulary coverage and resource profiling | `results/retrieval_validation_query_study/` |
+| [`06_bagging_experiment.ipynb`](experiments/06_bagging_experiment.ipynb) | Same six broad groups as 02; 80/20 | Full-data references, five-restart PLSA and matched bootstrap ensembles; rank aggregation | `results/bagging_experiment/` |
+| [`07_topic_boundary_experiment.ipynb`](experiments/07_topic_boundary_experiment.ipynb) | All 20 categories; 75% training sources; held-out partition unused | Single/restart/bootstrap PLSA topic probabilities for known source-token mixtures | `results/topic_boundary_experiment/` |
+
+The six-original-category subset in 04/05 is `comp.graphics`, `misc.forsale`,
+`rec.sport.baseball`, `sci.med`, `sci.space`, and `talk.politics.guns`. It is
+**different from the six supergroups** used in 02/06. Every result folder has
+`configuration.json` recording the precise category/group mapping, seed and
+settings. Experiments use seed 42 plus the explicitly coded restart/bootstrap
+seed offsets. See each notebook and its configuration for the full grids.
+
+## 8. Project layout and shared code
+
+```text
+IR_Project_final/
+├── README.md
+├── requirements.txt            # Full environment, including the spaCy model
+├── requirements-report.txt     # Report-only environment
+├── requirements-lock.txt       # Verified environment's resolved versions
+├── run_project.py              # check / preprocess / experiments / report / all
+├── Result.ipynb                # Executed consolidated report and closing discussion
+├── source_provenance.json      # Source-code hashes against the teammate archive
+├── validation.json             # Scope and environment of submission verification
+├── tests/                     # Runner tests and bounded notebook integration check
+├── experiments/               # Seven original numbered experiment notebooks
+├── src/
+│   ├── preprocessing.ipynb     # Fetch, clean and save the common corpus
+│   ├── text_processing.py      # Matching spaCy processing for queries
+│   ├── plsa_model.py           # Shared EM, fold-in, top words, restart selection
+│   ├── tfidf.py                # Training-only TF-IDF fit and transform
+│   ├── lsi.py                  # Training-only SVD + normalization
+│   ├── retrieval.py            # Cosine, query likelihood, background distribution
+│   ├── evaluation.py           # Binary relevance metrics
+│   ├── ensemble.py             # Negative mean-rank aggregation
+│   └── synthetic_data.py       # Sample two-category token mixtures
+├── results/                   # All supplied reference tables, plots and arrays
+├── data/                      # Generated locally; not committed
+└── executed_notebooks/         # CLI execution copies and diagnostics; not committed
+```
+
+All seven notebooks call the same PLSA class. Separate K values, restarts and
+bootstrap samples necessarily produce separate fitted instances. There is no
+single fitted model shared across incompatible experiments.
+
+## 9. Outputs and how to interpret them
+
+Source notebooks write CSV tables, PNG plots, JSON configuration/model-order
+records and (for ensembles) NPZ bootstrap-index arrays. Those writes **replace
+the corresponding files under `results/`** when you rerun an experiment.
+The committed files are the teammate's reference results, so use a separate
+clone or copy that directory if you want to retain them alongside a new run.
+
+The CLI saves executed experiment/preprocessing notebooks under
+`executed_notebooks/` and refreshes the root `Result.ipynb` after report mode.
+It records package versions in `executed_notebooks/last_run_environment.json`.
+On failure it stops, saves a `.failed.ipynb` there, and does not proceed to the
+next experiment. A failed or partial rerun can leave a mixture of old/new
+artifacts; finish the selected experiments successfully before interpreting a
+refreshed report as one newly reproduced collection.
+
+`Result.ipynb` includes:
+
+- The common data/model/evaluation workflow and metric definitions.
+- One result cell for each of the seven experiments, with comments explaining
+  how its outputs are generated and what they measure.
+- Principal tables and all 14 saved plots; expandable catalogs for all detail
+  tables/settings/arrays, with labeled previews of large tables.
+- Fourteen arithmetic/selection checks and SHA-256 fingerprints of 76 input
+  artifacts in the supplied result set.
+- A final step-by-step discussion of changes, motivation and measured gains,
+  plus within-experiment PLSA-versus-baseline comparison tables.
+
+### Metrics and methodological boundaries
+
+Binary relevance is defined by the category or group label. Precision@10 is
+hits divided by 10; Recall@10 is hits divided by the total relevant candidate
+count. AP@10 sums precision at relevant ranks and divides by `min(10, total
+relevant)`; MAP@10 is its mean across queries. NDCG uses logarithmic rank
+discounts and ideal DCG normalization. These formulas are in `src/evaluation.py`.
+
+The baseline includes all test documents; 02–06 exclude texts empty after
+preprocessing. K in 03 and K/background weight in 05 are selected on
+**validation**, not test scores. Topic IDs are arbitrary. Experiment 06 combines
+ranks; 07 averages source-associated probabilities after within-model topic
+association. Standard deviations in mixture plots describe generated-document
+variation, not confidence intervals.
+
+### What the supplied results support
+
+In experiment 06, bagged PLSA cosine has MAP@10 **0.9196**, compared with
+**0.8220** for the strongest reported TF-IDF variant and **0.7155** for the
+strongest reported LSI variant on that six-query task. Experiment 05 gives
+PLSA cosine a precision advantage without a MAP advantage. Experiments 01–04
+show limitations and within-PLSA improvements, and 07 is a probability probe
+without TF-IDF/LSI retrieval comparisons. The report does not claim that PLSA
+wins every experiment or that scores across different tasks form one improvement
+curve. No statistical significance test is supplied.
+
+## 10. Reproducibility, validation and practical limits
+
+The supplied experiment notebooks record Python 3.11.x but do not include the
+teammate's complete original dependency lockfile or exact spaCy package/model
+versions. Consequently **bit-for-bit reproduction of those saved scores cannot
+be promised**. Rebuilding preprocessing with another model version can change
+lemmas, vocabulary and downstream rankings. Numerical libraries, SVD, tie ordering
+and operating systems can also affect results. Fixed seeds and the pinned
+verification environment make subsequent runs more controlled; resource timings
+and whole-process RSS are inherently machine-dependent.
+
+The original full-budget research runs have **not** been repeated during this
+repository-packaging task. The verification performed is recorded in
+[`validation.json`](validation.json): a clean dependency installation, real
+module/model imports, the complete consolidated report, notebook schema/source
+checks, and bounded sample execution of all seven experiment code paths.
+Sample results are execution checks only and are not substituted for the
+committed research results.
+
+Full reproduction trains many PLSA fits and folds in thousands of documents.
+It can take substantially longer than report verification. EM allocates arrays
+scaling with nonzero document-word counts times topic count; multiple retained
+models increase memory use. A machine with 16 GB RAM or more is a practical
+recommendation, **not a measured minimum or guarantee**. Allow extra disk space
+for the Python environment, dataset cache and executed notebooks.
+
+The CLI default is **7,200 seconds per code cell**, not a two-hour bound on the
+whole workflow. To allow longer cells:
+
+```bash
+python run_project.py all --timeout 14400
+```
+
+The timeout changes execution supervision, not model iteration settings.
+
+### Rerun the verification checks
+
+```bash
+python -m unittest discover -s tests -v
+python tests/smoke_notebooks.py
+```
+
+The smoke check downloads/caches the real corpus, selects 15 documents per
+original category, performs real spaCy preprocessing, and executes all seven
+original experiment code paths with PLSA fitting/fold-in capped at three
+iterations. Its outputs go only to `executed_notebooks/smoke/`. Those outputs
+are not research findings and do not replace the committed `results/` files.
+The caps and sampling exist only in this test process, not in `run_project.py`
+or in the source experiment notebooks.
+
+## 11. Troubleshooting
+
+| Symptom | Action |
+|---|---|
+| `No module named src` / wrong paths | Work from `Tendering/IR_Project_final`. Use the runner or launch Jupyter there; keep the whole folder structure. |
+| `Missing ... 20news_preprocessed.npz` | Run `python run_project.py preprocess`, or use `all` to prepare it automatically if absent. |
+| spaCy model missing (`E050`) | Install `requirements.txt` in the active environment and run `python run_project.py check`. The pinned model wheel comes from GitHub. |
+| Imports work in terminal but fail in notebook | Select the correct environment/kernel. The runner uses the interpreter that launches it; check `python -c "import sys; print(sys.executable)"`. |
+| Package install fails | Confirm Python 3.11/3.12, upgrade pip, and use a fresh virtual environment. Check network access to PyPI and the official spaCy model release. |
+| Dataset download fails | Check internet/proxy access for scikit-learn's dataset host and retry preprocessing. Report-only mode does not need a dataset download. |
+| Memory error or very slow EM | Close other memory-heavy processes and use a machine with more RAM. Run one experiment at a time. Reducing K/features/iterations changes the experiment and must be labeled as such. |
+| Cell timeout | Review the `.failed.ipynb`, then rerun with a larger positive `--timeout`. This does not resume in the middle of a fit. |
+| Result report says a file is missing or a consistency assertion fails | Restore the complete committed `results/` set or successfully rerun the relevant experiment; do not manually invent/edit summary scores to make checks pass. |
+| Figures appear blank on GitHub | Download/open the notebook locally in JupyterLab; PNG originals are under the corresponding `results/` folder. |
+| Windows activation is blocked | Use `.\.venv\Scripts\python.exe` directly instead of the activation script. |
+
+## References and data
+
+- Thomas Hofmann, *Probabilistic Latent Semantic Analysis*, UAI 1999.
+- [scikit-learn: 20 Newsgroups dataset](https://scikit-learn.org/stable/datasets/real_world.html#the-20-newsgroups-text-dataset)
+- [spaCy English model documentation](https://spacy.io/models/en)
+- [Original project repository](https://github.com/Animesh2609/Probablisitic-Latent-Semantic-Analysis)
+
+The raw dataset and pretrained spaCy model are obtained from their respective
+providers. This repository does not assign a new license to those materials.
